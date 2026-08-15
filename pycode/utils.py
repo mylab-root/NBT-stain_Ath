@@ -10,13 +10,17 @@ import czifile
 #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 # Get the icon path during runtime
 #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+#def resource_path(relative_path):
+#    """ Get absolute path to resource (works for PyInstaller) """
+#    try:
+#        base_path = sys._MEIPASS
+#    except Exception:
+#        base_path = os.path.abspath(".")
+#        return os.path.join(base_path, relative_path)
 def resource_path(relative_path):
-    """ Get absolute path to resource (works for PyInstaller) """
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
+    if hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / relative_path
+    return Path(__file__).parent / relative_path
 
 
 #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
@@ -43,18 +47,20 @@ def read_czi(img_path: str):
         height, width, channel = scene.shape
     else:
         raise ValueError("Invalid dimensions.")
-    
-    XResolution = 10000 / micrometer_per_pixel[0]  # Pixels per cm
-    YResolution = 10000 / micrometer_per_pixel[1]  # Pixels per cm
-    ResolutionUnit = 3  # ResolutionUnit: 1=none, 2=inch, 3=centimeter
-    ImageWidth = width
-    ImageLength = height
-    tiff_info = TiffImagePlugin.ImageFileDirectory_v2()
-    tiff_info[282] = XResolution
-    tiff_info[283] = YResolution
-    tiff_info[296] = ResolutionUnit
-    tiff_info[256] = ImageWidth
-    tiff_info[257] = ImageLength
+
+    if micrometer_per_pixel is not None:
+        XResolution = 10000 / micrometer_per_pixel[0]  # Pixels per cm
+        YResolution = 10000 / micrometer_per_pixel[1]  # Pixels per cm
+        ResolutionUnit = 3  # ResolutionUnit: 1=none, 2=inch, 3=centimeter
+        ImageWidth = width
+        ImageLength = height
+        tiff_info = TiffImagePlugin.ImageFileDirectory_v2()
+        tiff_info[270] = "Bug report: https://github.com/mylab-root/NBT-stain_Ath/issues"
+        tiff_info[282] = XResolution
+        tiff_info[283] = YResolution
+        tiff_info[296] = ResolutionUnit
+        tiff_info[256] = ImageWidth
+        tiff_info[257] = ImageLength
 
     return arr, height, width, channel, tiff_info
 
@@ -62,7 +68,44 @@ def read_czi(img_path: str):
 def read_tiff(img_path: str):
     tif = Image.open(img_path)
     tiff_info = tif.tag_v2
+    tiff_info[270] = "Bug report: https://github.com/mylab-root/NBT-stain_Ath/issues"
     arr = np.array(tif)
+    if arr.ndim == 2:
+        height, width = arr.shape
+        channel = 1
+    elif arr.ndim == 3:
+        height, width, channel = arr.shape
+    else:
+        raise ValueError("Invalid dimensions.")
+    return arr, height, width, channel, tiff_info
+
+
+def read_other_image_type(img_path: str):
+    tiff_info = TiffImagePlugin.ImageFileDirectory_v2()
+    tiff_info[270] = "Bug report: https://github.com/mylab-root/NBT-stain_Ath/issues"
+    #arr = sk.io.imread(img_path)
+    arr = np.array(Image.open(img_path))
+    if arr.ndim == 2:
+        height, width = arr.shape
+        channel = 1
+    elif arr.ndim == 3:
+        height, width, channel = arr.shape
+    else:
+        raise ValueError("Invalid dimensions.")
+    return arr, height, width, channel, tiff_info
+
+
+def read_image(img_path: str, bw_invert: bool = False):
+    RGB = None
+    GRAY = None
+    PARAMS = None
+
+    if is_czi(img_path):
+        arr, height, width, channel, tiff_info = read_czi(img_path)
+    elif is_tiff(img_path):
+        arr, height, width, channel, tiff_info = read_tiff(img_path)
+    else:
+        arr, height, width, channel, tiff_info = read_other_image_type(img_path)
 
     if arr.ndim == 2:
         height, width = arr.shape
@@ -71,35 +114,13 @@ def read_tiff(img_path: str):
         height, width, channel = arr.shape
     else:
         raise ValueError("Invalid dimensions.")
-    
-    return arr, height, width, channel, tiff_info
-
-
-def read_image(img_path: str, bw_invert: bool = False):
-    RGB = None
-    GRAY = None
-    PARAMS = None
-    if is_czi(img_path):
-        arr, height, width, channel, tiff_info = read_czi(img_path)
-    elif is_tiff(img_path):
-        arr, height, width, channel, tiff_info = read_tiff(img_path)
-    else:
-        arr = sk.io.imread(img_path)
-
-    tiff_info[270] = "Bug report: https://github.com/mylab-root/NBT-stain_Ath/issues"
-    
-    if arr.ndim == 2:
-        height, width = arr.shape
-        channel = 1
-
-    if arr.ndim == 3:
-        height, width, channel = arr.shape
 
     if channel == 3:
         RGB = convert_to_uint8(arr)
         GRAY = convert_to_uint8(np.mean(arr, axis=2))
     else:
-        RGB = sk.color.gray2rgb(arr)
+        #RGB = sk.color.gray2rgb(arr)
+        RGB = np.stack([arr, arr, arr], axis=2)
         GRAY = convert_to_uint8(arr)
 
     if bw_invert is True:
@@ -111,7 +132,6 @@ def read_image(img_path: str, bw_invert: bool = False):
         "channel": channel,
         "tiff_info": tiff_info,
     }
-
 
     return RGB, GRAY, PARAMS
 
